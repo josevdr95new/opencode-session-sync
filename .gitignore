@@ -1,0 +1,9 @@
+node_modules/
+*.log
+npm-install-server.log
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+
+# scripts de debug temporales (no referenciados por package.json)
+scripts/debug-*.mjs

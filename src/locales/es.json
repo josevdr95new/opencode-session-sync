@@ -1,0 +1,141 @@
+{
+  "plugin": {
+    "name": "opencode-session-sync",
+    "tagline": "Respaldo y restauración de sesiones de OpenCode en Google Drive y GitHub"
+  },
+  "cmd": {
+    "sync_login": { "desc": "Conectar la cuenta del proveedor seleccionado" },
+    "sync_logout": { "desc": "Desconectar y limpiar credenciales locales" },
+    "sync_status": { "desc": "Mostrar estado de conexión y última sincronización" },
+    "sync_now": { "desc": "Forzar una sincronización inmediata" },
+    "sync_restore": { "desc": "Restaurar sesiones desde la nube" },
+    "sync_setup": { "desc": "Asistente de configuración del proveedor (Google o GitHub)" },
+    "sync_help": { "desc": "Mostrar la ayuda del plugin en el idioma activo" }
+  },
+  "setup": {
+    "choose_provider": "Elige el proveedor de respaldo: escribe /sync-setup google o /sync-setup github",
+    "invalid_provider": "Proveedor no reconocido. Usa /sync-setup google o /sync-setup github",
+    "configured": "Proveedor configurado: {provider}. Ejecuta /sync-login para conectar."
+  },
+  "guide": {
+    "google": {
+      "title": "Guía de configuración · Google Drive",
+      "steps": [
+        "Abre console.cloud.google.com y crea un proyecto (o usa uno existente).",
+        "En «APIs y servicios», habilita la Google Drive API para ese proyecto.",
+        "Configura la pantalla de consentimiento (tipo externo; nombre: OpenCode Sync).",
+        "Crea credenciales → ID de cliente de OAuth → tipo «Aplicación de escritorio» y copia el Client ID.",
+        "Pega el Client ID en ~/.config/opencode/sync.json y ejecuta /sync-login."
+      ],
+      "note": "El Client ID es público y se configura una sola vez; sirve para todas tus computadoras.",
+      "link": "https://console.cloud.google.com/apis/credentials"
+    },
+    "github": {
+      "title": "Guía de configuración · GitHub",
+      "steps": [
+        "Crea un repositorio privado (por ejemplo, opencode-sessions).",
+        "Ve a Settings → Developer settings → Personal access tokens → Fine-grained tokens.",
+        "Genera un token con «Contents: Read and write» limitado a ese repositorio (caduca en 90 días).",
+        "Pega el token en sync.json o en la variable OPENCODE_SYNC_TOKEN y ejecuta /sync-login."
+      ],
+      "note": "Sin registro OAuth: un pegado de credenciales y listo; el cifrado AES-256-GCM se mantiene.",
+      "link": "https://github.com/settings/personal-access-tokens/new"
+    }
+  },
+  "sync": {
+    "queued": "Sincronización en cola…",
+    "restore": "Restauración iniciada…",
+    "logout": "Credenciales locales eliminadas"
+  },
+  "status": {
+    "connected": "Conectado a {provider} como {user}",
+    "disconnected": "Sin conexión. Ejecuta /sync-setup para configurar un proveedor."
+  },
+  "help": {
+    "title": "opencode-session-sync · comandos disponibles",
+    "lang_note": "Idiomas disponibles: es | en (variable OPENCODE_LANG)"
+  },
+  "cli": {
+    "usage": "Uso: opencode-session-sync <setup|backup|restore|status> [opciones]",
+    "help_line": "Opciones: --lang es|en · --provider local|github · --dry-run · --overwrite · --no-encrypt · --output <dir> · --from <dir> · --parts <80mb> · --token <pat> (--owner/--repo para GitHub)",
+    "unknown_cmd": "Comando no reconocido: {cmd}",
+    "setup": {
+      "q_lang": "Idioma (es/en) [es]: ",
+      "q_provider": "Proveedor de respaldo (local/github) [local]: ",
+      "q_owner": "Usuario/org de GitHub: ",
+      "q_repo": "Repositorio privado de GitHub [opencode-sessions]: ",
+      "q_pass": "Frase de cifrado (Enter = generar una automáticamente): ",
+      "done": "✓ Configuración guardada en {path}",
+      "summary": "Proveedor: {provider} · destino de copias: {localDir} · partes: {parts} · cifrado: {encrypt}",
+      "pass_generated": "✓ Frase de cifrado generada y guardada en {path} (no se vuelve a mostrar)",
+      "github_hint": "Para GitHub define también --owner / --repo y el token en OPENCODE_SYNC_TOKEN o {path}.",
+      "token_hint": "Falta el token: define OPENCODE_SYNC_TOKEN o edítalo en {path} antes de respaldar."
+    },
+    "backup": {
+      "running": "Creando respaldo…"
+    },
+    "restore": {
+      "running": "Restaurando…"
+    },
+    "status": {
+      "data_dir": "dataDir: {dir} [{ok}]",
+      "config_dir": "configDir: {dir}",
+      "provider": "Proveedor: {provider} → {back}",
+      "github_repo": "repo de github {repo}",
+      "parts": "Tamaño de parte: {parts}",
+      "encrypt": "Cifrado AES-256-GCM: {encrypt}",
+      "auth": "Credenciales: {auth}",
+      "on": "sí",
+      "off": "no",
+      "last": "Última copia: {stamp} · {date} · {parts} parte(s) · {size} · cifrado: {encrypted} · {dir}",
+      "none": "Aún no hay copias de respaldo."
+    },
+    "menu": {
+      "title": "opencode-session-sync · Menú principal",
+      "option1": "Mostrar estado",
+      "option2": "Respaldar ahora",
+      "option3": "Restaurar (por defecto: mostrar plan)",
+      "option4": "Configurar proveedor",
+      "option5": "Ayuda (usage)",
+      "prompt": "Elige una opción (1-5, q para salir): ",
+      "readonly_note": "Menú interactivo disponible solo en terminal (TTY). Uso: opencode-session-sync <comando>",
+      "unknown_option": "Opción no reconocida: {option} (elige 1-5, o q para salir)",
+      "restore_confirm": "¿Escribir los cambios? (s/N): ",
+      "restore_cancelled": "Cambios no escritos.",
+      "goodbye": "Salir"
+    }
+  },
+  "back": {
+    "summary": "✓ Respaldo creado: {files} archivo(s), {bytes} sin comprimir · {parts} parte(s) de {size} · cifrado: {encrypted} · sha256 {checksum}…",
+    "encrypted_true": "AES-256-GCM",
+    "encrypted_false": "sin cifrar",
+    "dest": "→ Guardado en: {dest}",
+    "dryrun_build": "→ dry-run: construido correctamente, NO se subió ninguno.",
+    "warning_big": "⚠ El respaldo supera 500 MB ({size}); no se truncó nada — viaja troceado en parts.",
+    "restored": "✓ Restauración completada: {files} archivo(s) escritos, {skipped} omitido(s).",
+    "restore_targets": "→ data: {dataDir} · config: {configDir}",
+    "skipped_hint": "ℹ Hubo archivos existentes que no se sobreescribieron; usa --overwrite para forzar.",
+    "dryrun": "🔍 dry-run: se restaurarían {files} archivo(s) ({bytes}) en data: {dataDir} · config: {configDir}"
+  },
+  "err": {
+    "help_hint": "(ejecuta `opencode-session-sync help` para ver la ayuda)",
+    "passphrase": "Frase de cifrado incorrecta o datos alterados (fallo de verificación AES-256-GCM).",
+    "corrupt": "Datos del respaldo corruptos o formato no reconocido (falta la cabecera OCES1).",
+    "pass_required": "El respaldo está cifrado: falta la passphrase (OPENCODE_SYNC_PASSPHRASE o sync-auth.json).",
+    "pass_missing": "Cifrado activo pero no hay passphrase: ejecuta `setup` o define OPENCODE_SYNC_PASSPHRASE.",
+    "token_missing": "Falta el token de GitHub: define OPENCODE_SYNC_TOKEN o guárdalo en sync-auth.json.",
+    "creds_missing": "Falta owner/repo de GitHub: completa --owner y --repo o sync.json.",
+    "git_missing": "git CLI no está disponible en PATH (requerido para el proveedor github).",
+    "auth_failed": "Autenticación GitHub rechazada (token inválido o sin permisos Contents: Read and write).",
+    "push_failed": "El push a GitHub falló: {detail}",
+    "pull_failed": "La descarga desde GitHub falló: {detail}",
+    "no_backup": "No se encontró ninguna copia de respaldo en: {dir}",
+    "part_missing": "Falta una parte del respaldo: {part} (copia incompleta).",
+    "tar_corrupt": "Respaldo dañado: manifest/parts incoherentes o checksum/sha256 no coincide.",
+    "traverse": "Entrada insegura bloqueada (path traversal o ruta absoluta): {entry}",
+    "provider_unknown": "Proveedor desconocido: {provider} (usa local o github)",
+    "data_missing": "⚠ No existe el directorio de datos de OpenCode: {dir}",
+    "config_missing": "⚠ No existe el directorio de configuración de OpenCode: {dir}",
+    "bad_part": "Tamaño de parte inválido: {value} (esperado algo como 80mb)"
+  }
+}
