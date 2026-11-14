@@ -343,9 +343,16 @@ export function getStatus({ lang, env = process.env } = {}) {
  *  provider 'gdrive' con {clientId, clientSecret, refreshToken, folderName?}: valida
  *  contra la API de Google Drive (`validateGDrive` inyectable) y guarda cfg {provider,
  *  folderId, user}; los secrets SOLO viven en sync-auth.json.
- *  Devuelve { lines, message, cfg, login?, repo?, user?, folderId?, authHandle }. */
+ *  `test` (opt-in, conexión desde la GUI): modo ESTRICTO — EXIGE credenciales completas
+ *  y las valida contra la API ANTES de persistir; sin credenciales completas es ERROR
+ *  (nada se escribe en disco). local+test: verifica que el dir de copias existe y es
+ *  ESCRIBIBLE (fichero sonda .write-test). Sin `test` (CLI/env): flujo histórico intacto
+ *  (sin creds persiste + hint, sin validar).
+ *  Devuelve { lines, message, cfg, login?, repo?, user?, folderId?, verified, authHandle }.
+ *  `verified` lista los checks superados: ['token','repo-push'] | ['auth','folder'] | ['writable']. */
 export async function runSetup({
   lang, provider, parts, encrypt, env = process.env, answers = {},
+  test = false,
   validate = validateGithubCreds, validateGDrive = validateGDriveCreds,
 } = {}) {
   const L = lang || detectLanguage(env);
@@ -376,10 +383,21 @@ export async function runSetup({
   if (answers.token) authHandle.token = answers.token;
 
   // GitHub: validar credenciales vía API REST antes de escribir nada en disco.
+  // Con `test` (GUI): credenciales completas OBLIGATORIAS — si falta algo es ERROR.
   let login = null, repoFull = null, tail = null;
+  const verified = [];
   if (providerName === 'github') {
     const token = authHandle.token || env.OPENCODE_SYNC_TOKEN;
-    if (token && cfg.owner && cfg.repo) {
+    if (test) {
+      if (!cfg.owner || !cfg.repo || !token) {
+        throw new Error(t(L, 'err.setup_incomplete'));
+      }
+      const v = await validate({ owner: cfg.owner, repo: cfg.repo, token, lang: L });
+      login = v.login;
+      repoFull = v.repo || `${cfg.owner}/${cfg.repo}`;
+      tail = maskToken(token);
+      verified.push('token', 'repo-push');
+    } else if (token && cfg.owner && cfg.repo) {
       const v = await validate({ owner: cfg.owner, repo: cfg.repo, token, lang: L });
       login = v.login;
       repoFull = v.repo || `${cfg.owner}/${cfg.repo}`;
@@ -390,6 +408,7 @@ export async function runSetup({
   // Google Drive: validar credenciales vía API antes de escribir nada en disco.
   // cfg guarda SOLO {provider, folderId, user}; secrets en sync-auth.json.
   // Sin credenciales completas NO valida (como github con token_hint): persiste y avisa.
+  // Con `test` (GUI): credenciales completas OBLIGATORIAS — si falta algo es ERROR.
   let gdUser = null, gdFolderId = null, gdFolderName = null;
   if (providerName === 'gdrive') {
     const creds = {
@@ -398,7 +417,10 @@ export async function runSetup({
       refreshToken: answers.refreshToken || authHandle.gdriveRefreshToken,
     };
     gdFolderName = answers.folderName || undefined;
-    if (creds.clientId && creds.clientSecret && creds.refreshToken) {
+    if (test) {
+      if (!creds.clientId || !creds.clientSecret || !creds.refreshToken) {
+        throw new Error(t(L, 'err.gdrive_creds'));
+      }
       const v = await validateGDrive({ ...creds, folderName: gdFolderName, lang: L });
       gdUser = v.user;
       gdFolderId = v.folderId;
@@ -408,6 +430,39 @@ export async function runSetup({
       authHandle.gdriveClientId = creds.clientId;
       authHandle.gdriveClientSecret = creds.clientSecret;
       authHandle.gdriveRefreshToken = creds.refreshToken;
+      verified.push('auth', 'folder');
+    } else if (creds.clientId && creds.clientSecret && creds.refreshToken) {
+      const v = await validateGDrive({ ...creds, folderName: gdFolderName, lang: L });
+      gdUser = v.user;
+      gdFolderId = v.folderId;
+      gdFolderName = v.folderName || gdFolderName || DEFAULT_FOLDER_NAME;
+      cfg.folderId = v.folderId;
+      cfg.user = v.user || null;
+      authHandle.gdriveClientId = creds.clientId;
+      authHandle.gdriveClientSecret = creds.clientSecret;
+      authHandle.gdriveRefreshToken = creds.refreshToken;
+    }
+  }
+
+  // Local + `test` (GUI): validación REAL de escritura del dir de copias, ANTES de
+  // persistir (si falla, NADA se escribe en disco). Crea el dir si falta y comprueba
+  // que se puede escribir con un fichero sonda (.write-test): escribir, leer y borrar.
+  let localDirVerified = null;
+  if (providerName === 'local' && test) {
+    const dir = path.resolve(cfg.localDir);
+    const probe = path.join(dir, '.write-test');
+    const CONTENT = 'opencode-session-sync .write-test';
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(probe, CONTENT, 'utf8');
+      const readBack = fs.readFileSync(probe, 'utf8');
+      if (readBack !== CONTENT) throw new Error('write-test: contenido leído no coincide');
+      verified.push('writable');
+      localDirVerified = dir;
+    } catch (err) {
+      throw new Error(t(L, 'err.local_not_writable', { dir }));
+    } finally {
+      try { fs.rmSync(probe, { force: true }); } catch { /* noop */ }
     }
   }
 
@@ -430,6 +485,19 @@ export async function runSetup({
       folderId: gdFolderId || '?',
     }));
   }
+  // Mensaje de éxito enriquecido (solo tras `test` SUPERADO): qué se verificó, explícito.
+  if (verified.length) {
+    if (providerName === 'github') {
+      lines.push(t(L, 'back.setup_verified_gh', { owner: cfg.owner, repo: repoFull || cfg.repo }));
+    } else if (providerName === 'gdrive') {
+      lines.push(t(L, 'back.setup_verified_gd', {
+        user: gdUser || '?',
+        folder: gdFolderName || gdFolderId || DEFAULT_FOLDER_NAME,
+      }));
+    } else {
+      lines.push(t(L, 'back.setup_verified_local', { dir: localDirVerified || cfg.localDir }));
+    }
+  }
   if (generated) lines.push(t(L, 'cli.setup.pass_generated', { path: path.join(configDir, 'sync-auth.json') }));
   if (cfg.provider === 'github' && !authHandle.token && !env.OPENCODE_SYNC_TOKEN) {
     lines.push(t(L, 'cli.setup.token_hint', { path: path.join(configDir, 'sync-auth.json') }));
@@ -438,7 +506,7 @@ export async function runSetup({
     lines.push(t(L, 'cli.setup.gd_hint', { path: path.join(configDir, 'sync-auth.json') }));
   }
   const message = lines.join('\n');
-  return { lines: message, message, cfg, login, repo: repoFull, user: gdUser, folderId: gdFolderId, authHandle };
+  return { lines: message, message, cfg, login, repo: repoFull, user: gdUser, folderId: gdFolderId, verified, authHandle };
 }
 
 function saveBoth(cfg, auth, configDir) {

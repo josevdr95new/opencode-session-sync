@@ -1036,6 +1036,7 @@ function SyncSettings() {
         clientSecret?: string
         refreshToken?: string
         folderName?: string
+        test?: boolean
       } =
         provider === 'github'
           ? {
@@ -1043,6 +1044,7 @@ function SyncSettings() {
               ...(owner() ? { owner: owner() } : {}),
               ...(repo() ? { repo: repo() } : {}),
               token: token(),
+              test: true,
             }
           : provider === 'gdrive'
             ? {
@@ -1051,8 +1053,9 @@ function SyncSettings() {
                 clientSecret: clientSecret(),
                 refreshToken: refreshToken(),
                 ...(folderName() ? { folderName: folderName() } : {}),
+                test: true,
               }
-            : { provider }
+            : { provider, test: true }
       const res = (await rpc(ctx).setup(input)) as { lines: string; cfg: SyncCfg; message?: string }
       ctx.toast.show({
         variant: 'success',

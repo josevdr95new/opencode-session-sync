@@ -150,11 +150,14 @@ export default Plugin.define({
 
       setup: async (input, context) => {
         try {
-          const { lines, cfg, message, login, repo, user, folderId } = await runSetup({
+          const { lines, cfg, message, login, repo, user, folderId, verified } = await runSetup({
             lang,
             provider: input?.provider,
             parts: input?.parts,
             encrypt: input?.encrypt,
+            // `test: true` (Conectar en la GUI): validación ESTRICTA — exige credenciales
+            // completas y las valida contra la API antes de persistir; sin ellas es ERROR.
+            test: input?.test === true,
             env: process.env,
             answers: {
               owner: input?.owner,
@@ -168,7 +171,7 @@ export default Plugin.define({
             },
           });
           // Nunca se devuelven secrets: solo lines/message/cfg (sin secrets) y metadatos.
-          const out = { lines, cfg, message: message || lines };
+          const out = { lines, cfg, message: message || lines, verified: verified || [] };
           if (login) out.login = login;
           if (repo) out.repo = repo;
           if (user) out.user = user;

@@ -152,7 +152,13 @@ export const SessionSync = Rpc.define({
      *  provider 'gdrive' + {clientId, clientSecret, refreshToken, folderName?}: valida
      *  contra la API de Google Drive (crea la carpeta raíz si falta) y guarda cfg
      *  {provider:'gdrive', folderId, user}; los secrets SOLO en sync-auth.json.
-     *  -> { lines, cfg, message?, login?, repo?, user?, folderId? } */
+     *  `test: true` = conexión desde la GUI: EXIGE credenciales completas y las valida
+     *  contra la API antes de persistir; sin credenciales completas es ERROR. Con
+     *  provider 'local' verifica que el dir de copias existe y es ESCRIBIBLE. Sin
+     *  `test` (CLI/env) se mantiene el flujo histórico: sin credenciales persiste + hint.
+     *  `verified` lista los checks superados (p. ej. ['token','repo-push'] /
+     *  ['auth','folder'] / ['writable']); vacío si no hubo validación.
+     *  -> { lines, cfg, message?, login?, repo?, user?, folderId?, verified } */
     setup: {
       input: {
         type: 'object',
@@ -168,6 +174,7 @@ export const SessionSync = Rpc.define({
           clientSecret: { type: 'string' },
           refreshToken: { type: 'string' },
           folderName: { type: 'string' },
+          test: { type: 'boolean' },
         },
         additionalProperties: false,
       },
@@ -181,6 +188,7 @@ export const SessionSync = Rpc.define({
           repo: { type: 'string' },
           user: { type: 'string' },
           folderId: { type: 'string' },
+          verified: { type: 'array', items: { type: 'string' } },
         },
         required: ['lines', 'cfg'],
       },

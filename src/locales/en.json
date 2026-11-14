@@ -143,7 +143,10 @@
     "restored": "✓ Restore completed: {files} file(s) written, {skipped} skipped.",
     "restore_targets": "→ data: {dataDir} · config: {configDir}",
     "skipped_hint": "ℹ Existing files were not overwritten; use --overwrite to force.",
-    "dryrun": "🔍 dry-run: would restore {files} file(s) ({bytes}) into data: {dataDir} · config: {configDir}"
+    "dryrun": "🔍 dry-run: would restore {files} file(s) ({bytes}) into data: {dataDir} · config: {configDir}",
+    "setup_verified_gh": "Setup validated: token OK and push permission on {owner}/{repo} — backups will be uploaded when backing up",
+    "setup_verified_gd": "Setup validated: Drive accessible as {user}, folder ready ({folder})",
+    "setup_verified_local": "Setup validated: local folder is writable ({dir})"
   },
   "del": {
     "deleted": "Backup {name} deleted",
@@ -182,6 +185,8 @@
     "bad_part": "Invalid part size: {value} (expected something like 80mb)",
     "gdrive_auth": "Google Drive authentication rejected (check clientId/clientSecret/refreshToken; it may be revoked).",
     "gdrive_api": "Google Drive API error: {detail}",
-    "gdrive_creds": "Google Drive credentials missing: clientId/clientSecret/refreshToken."
+    "gdrive_creds": "Google Drive credentials missing: clientId/clientSecret/refreshToken.",
+    "setup_incomplete": "Missing fields: fill owner, repo and token",
+    "local_not_writable": "The local folder is not writable: {dir}"
   }
 }

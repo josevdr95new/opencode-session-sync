@@ -143,7 +143,10 @@
     "restored": "✓ Restauración completada: {files} archivo(s) escritos, {skipped} omitido(s).",
     "restore_targets": "→ data: {dataDir} · config: {configDir}",
     "skipped_hint": "ℹ Hubo archivos existentes que no se sobreescribieron; usa --overwrite para forzar.",
-    "dryrun": "🔍 dry-run: se restaurarían {files} archivo(s) ({bytes}) en data: {dataDir} · config: {configDir}"
+    "dryrun": "🔍 dry-run: se restaurarían {files} archivo(s) ({bytes}) en data: {dataDir} · config: {configDir}",
+    "setup_verified_gh": "Configuración validada: token OK y permiso de push en {owner}/{repo} — las copias se subirán al respaldar",
+    "setup_verified_gd": "Configuración validada: Drive accesible como {user}, carpeta lista ({folder})",
+    "setup_verified_local": "Configuración validada: carpeta local escribible ({dir})"
   },
   "del": {
     "deleted": "Copia {name} eliminada",
@@ -182,6 +185,8 @@
     "bad_part": "Tamaño de parte inválido: {value} (esperado algo como 80mb)",
     "gdrive_auth": "Autenticación de Google Drive rechazada (revisa clientId/clientSecret/refreshToken; puede estar revocado).",
     "gdrive_api": "Error en la API de Google Drive: {detail}",
-    "gdrive_creds": "Faltan credenciales de Google Drive: clientId/clientSecret/refreshToken."
+    "gdrive_creds": "Faltan credenciales de Google Drive: clientId/clientSecret/refreshToken.",
+    "setup_incomplete": "Faltan datos: completa owner, repo y token",
+    "local_not_writable": "La carpeta local no se puede escribir: {dir}"
   }
 }
