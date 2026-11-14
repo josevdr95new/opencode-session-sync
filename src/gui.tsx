@@ -818,6 +818,17 @@ function DashboardBody(props: {
         >
           {ctx.t('action.restore')}
         </ctx.ui.Button>
+        {/* Abre la SettingsPage del plugin ('sync'): API ctx.layout.settings(page) con el
+            id contribuido en ctx.add(SettingsPage, { id: 'sync' }). Icono 'settings-gear'
+            del catálogo del host (no existe 'settings' a secas en icon-name.d.ts). */}
+        <ctx.ui.Button
+          variant="ghost-muted"
+          size="small"
+          icon="settings-gear"
+          onClick={() => ctx.layout.settings('sync')}
+        >
+          {ctx.t('settings.open')}
+        </ctx.ui.Button>
       </div>
 
       {/* Progreso real (eventos RPC 'progress'): solo con acción en curso Y primer evento
@@ -1297,6 +1308,7 @@ export default Plugin.define({
       'encrypted.no': 'Sin cifrar',
       'action.backup': 'Respaldar ahora',
       'action.restore': 'Restaurar',
+      'settings.open': 'Configuración',
       'action.confirmRestore': 'Restaurar ahora',
       'action.cancel': 'Cancelar',
       'action.retry': 'Reintentar',
@@ -1375,6 +1387,7 @@ export default Plugin.define({
       'encrypted.no': 'Plain',
       'action.backup': 'Back up now',
       'action.restore': 'Restore',
+      'settings.open': 'Settings',
       'action.confirmRestore': 'Restore now',
       'action.cancel': 'Cancel',
       'action.retry': 'Retry',
