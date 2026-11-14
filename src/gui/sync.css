@@ -279,6 +279,12 @@
   align-items: center;
   gap: 16px;
 }
+.oss-provider-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
 .oss-setup-fields { display: flex; flex-direction: column; gap: 9px; }
 .oss-field { display: flex; flex-direction: column; gap: 3px; }
 .oss-field-label {

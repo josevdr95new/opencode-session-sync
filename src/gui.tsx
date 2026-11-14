@@ -1017,6 +1017,14 @@ function SyncSettings() {
   const [saving, setSaving] = createVisitState(false)
   const [saveErr, setSaveErr] = createVisitState<string | null>(null)
 
+  // Selección de proveedor con botones normales (el Menu del host no dispara onSelect
+  // en esta superficie). La traza en consola sirve de diagnóstico remoto (renderer.log).
+  const pick = (p: 'local' | 'github' | 'gdrive') => {
+    console.info('session-sync: provider picked', p)
+    setSaveErr(null)
+    setPicked(p)
+  }
+
   // GitHub listo: token siempre; owner/repo si el campo los trae O la cfg ya los tiene
   // (runSetup conserva los valores previos cuando el campo llega vacío).
   const ghReady = (): boolean =>
@@ -1108,44 +1116,32 @@ function SyncSettings() {
         </Show>
         <div class="oss-setup-row">
           <span class="oss-settings-key">{ctx.t('settings.provider')}</span>
-          <ctx.ui.Menu
-            trigger="button"
-            label={ctx.t(
-              selProvider() === 'github'
-                ? 'settings.provider.github'
-                : selProvider() === 'gdrive'
-                  ? 'settings.provider.gdrive'
-                  : 'settings.provider.local',
-            )}
-            items={[
-              {
-                label: ctx.t('settings.provider.local'),
-                icon: 'folder',
-                onSelect: () => {
-                  setPicked('local')
-                  setSaveErr(null)
-                },
-              },
-              {
-                label: ctx.t('settings.provider.github'),
-                icon: 'github',
-                onSelect: () => {
-                  setPicked('github')
-                  setSaveErr(null)
-                },
-              },
-              {
-                // Activada (F2): rpc.setup declara provider 'gdrive' y el core valida
-                // las credenciales contra la API de Google antes de guardar.
-                label: ctx.t('settings.provider.gdrive'),
-                icon: 'cloud-upload',
-                onSelect: () => {
-                  setPicked('gdrive')
-                  setSaveErr(null)
-                },
-              },
-            ]}
-          />
+          <div class="oss-provider-picker">
+            <ctx.ui.Button
+              variant={selProvider() === 'local' ? 'contrast' : 'ghost-muted'}
+              size="small"
+              icon="folder"
+              onClick={() => pick('local')}
+            >
+              {ctx.t('settings.provider.local')}
+            </ctx.ui.Button>
+            <ctx.ui.Button
+              variant={selProvider() === 'github' ? 'contrast' : 'ghost-muted'}
+              size="small"
+              icon="github"
+              onClick={() => pick('github')}
+            >
+              {ctx.t('settings.provider.github')}
+            </ctx.ui.Button>
+            <ctx.ui.Button
+              variant={selProvider() === 'gdrive' ? 'contrast' : 'ghost-muted'}
+              size="small"
+              icon="cloud-upload"
+              onClick={() => pick('gdrive')}
+            >
+              {ctx.t('settings.provider.gdrive')}
+            </ctx.ui.Button>
+          </div>
         </div>
         {/* El label visible es nuestro (el prop label del host es solo para screen readers);
             el prop label se pasa igual para accesibilidad. */}
