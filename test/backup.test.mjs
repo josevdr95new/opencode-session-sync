@@ -41,11 +41,11 @@ function buildConfigDir() {
   return configDir;
 }
 
-test('makeBackup: manifest correcto, excluye sync/auth/wal/shm, parts <= límite', () => {
+test('makeBackup: manifest correcto, excluye sync/auth/wal/shm, parts <= límite', async () => {
   const dataDir = buildDataDir();
   const configDir = buildConfigDir();
   const outDir = mkTemp('out');
-  const info = makeBackup({ dataDir, configDir, outDir, maxPartBytes: PART });
+  const info = await makeBackup({ dataDir, configDir, outDir, maxPartBytes: PART });
 
   const m = info.manifest;
   assert.equal(m.encrypted, false);
@@ -66,17 +66,17 @@ test('makeBackup: manifest correcto, excluye sync/auth/wal/shm, parts <= límite
   assert.equal(onDisk.parts, m.parts);
 });
 
-test('makeBackup: cifrado activado manifiesto + roundtrip descifra igual', () => {
+test('makeBackup: cifrado activado manifiesto + roundtrip descifra igual', async () => {
   const dataDir = mkTemp('enc-edge');
   fs.writeFileSync(path.join(dataDir, 'opencode.db'), Buffer.alloc(1024, 3));
   const outDir = mkTemp('enc-out');
-  const info = makeBackup({ dataDir, configDir: mkTemp('enc-cfg'), passphrase: 'secreta', outDir, maxPartBytes: PART });
+  const info = await makeBackup({ dataDir, configDir: mkTemp('enc-cfg'), passphrase: 'secreta', outDir, maxPartBytes: PART });
   assert.equal(info.encrypted, true);
   assert.equal(info.manifest.encrypted, true);
   const blob = fs.readFileSync(path.join(outDir, 'part.000'));
   assert.equal(blob.subarray(0, 5).toString('ascii'), 'OCES1');
   const tData = mkTemp('enc-td');
-  const res = restoreBackup({
+  const res = await restoreBackup({
     sourceDir: outDir, targetDataDir: tData, targetConfigDir: mkTemp('enc-tc'),
     passphrase: 'secreta', overwrite: true,
   });
@@ -84,14 +84,14 @@ test('makeBackup: cifrado activado manifiesto + roundtrip descifra igual', () =>
   assert.equal(sha(fs.readFileSync(path.join(tData, 'opencode.db'))), sha(fs.readFileSync(path.join(dataDir, 'opencode.db'))));
 });
 
-test('restoreBackup roundtrip completo por SHA-256 (cifrado y multi-part)', () => {
+test('restoreBackup roundtrip completo por SHA-256 (cifrado y multi-part)', async () => {
   const dataDir = buildDataDir();
   const configDir = buildConfigDir();
   const outDir = mkTemp('enc-out');
-  makeBackup({ dataDir, configDir, outDir, passphrase: 'frase-tests', maxPartBytes: PART });
+  await makeBackup({ dataDir, configDir, outDir, passphrase: 'frase-tests', maxPartBytes: PART });
   const targetData = mkTemp('tdata');
   const targetConfig = mkTemp('tcfg');
-  const res = restoreBackup({
+  const res = await restoreBackup({
     sourceDir: outDir, targetDataDir: targetData, targetConfigDir: targetConfig,
     passphrase: 'frase-tests', overwrite: true,
   });
@@ -116,12 +116,12 @@ test('restoreBackup roundtrip completo por SHA-256 (cifrado y multi-part)', () =
   assert.ok(!fs.existsSync(path.join(targetData, 'opencode.db-shm')));
 });
 
-test('restoreBackup: passphrase errónea falla con mensaje localizable', () => {
+test('restoreBackup: passphrase errónea falla con mensaje localizable', async () => {
   const dataDir = mkTemp('d2');
   fs.writeFileSync(path.join(dataDir, 'opencode.db'), Buffer.alloc(100, 1));
   const outDir = mkTemp('o2');
-  makeBackup({ dataDir, configDir: mkTemp('c2'), passphrase: 'buena', outDir, maxPartBytes: PART });
-  assert.throws(
+  await makeBackup({ dataDir, configDir: mkTemp('c2'), passphrase: 'buena', outDir, maxPartBytes: PART });
+  await assert.rejects(
     () => restoreBackup({
       sourceDir: outDir, targetDataDir: mkTemp('x'), targetConfigDir: mkTemp('y'), passphrase: 'mala',
     }),
@@ -159,7 +159,7 @@ function buildEvilTar(entries) {
   return Buffer.concat(chunks);
 }
 
-test('path traversal / rutas absolutas rechazados, nada se escribe', () => {
+test('path traversal / rutas absolutas rechazados, nada se escribe', async () => {
   const evils = ['/abs/evil.txt', 'data/../evil.txt', '../evil.txt', 'data/x/../../out.txt', 'C:\\users\\evil.txt'];
   for (const evilName of evils) {
     const sourceDir = mkTemp('evil-src');
@@ -176,7 +176,7 @@ test('path traversal / rutas absolutas rechazados, nada se escribe', () => {
     }));
     let caught = null;
     try {
-      restoreBackup({ sourceDir, targetDataDir: targetData, targetConfigDir: targetConfig, overwrite: true });
+      await restoreBackup({ sourceDir, targetDataDir: targetData, targetConfigDir: targetConfig, overwrite: true });
     } catch (e) { caught = e; }
     assert.ok(caught, `debería rechazar: ${evilName}`);
     assert.equal(caught.message, t('es', 'err.traverse', { entry: evilName }));
@@ -186,15 +186,15 @@ test('path traversal / rutas absolutas rechazados, nada se escribe', () => {
   }
 });
 
-test('dryRun: no escribe nada y reporta el plan', () => {
+test('dryRun: no escribe nada y reporta el plan', async () => {
   const dataDir = buildDataDir();
   const configDir = mkTemp('cfgdry');
   fs.writeFileSync(path.join(configDir, 'agent.md'), '#');
   const outDir = mkTemp('dry-out');
-  makeBackup({ dataDir, configDir, outDir, passphrase: 'p1', maxPartBytes: PART });
+  await makeBackup({ dataDir, configDir, outDir, passphrase: 'p1', maxPartBytes: PART });
   const targetData = mkTemp('dry-data');
   const targetConfig = mkTemp('dry-cfg');
-  const res = restoreBackup({
+  const res = await restoreBackup({
     sourceDir: outDir, targetDataDir: targetData, targetConfigDir: targetConfig,
     passphrase: 'p1', dryRun: true, overwrite: true,
   });
@@ -205,17 +205,17 @@ test('dryRun: no escribe nada y reporta el plan', () => {
   assert.equal(fs.readdirSync(targetConfig).length, 0);
 });
 
-test('sin overwrite: existentes skip, nuevos se escriben', () => {
+test('sin overwrite: existentes skip, nuevos se escriben', async () => {
   const dataDir = mkTemp('ow-data');
   fs.writeFileSync(path.join(dataDir, 'opencode.db'), Buffer.alloc(64, 5));
   fs.mkdirSync(path.join(dataDir, 'storage'), { recursive: true });
   fs.writeFileSync(path.join(dataDir, 'storage', 'a.json'), 'A');
   const outDir = mkTemp('ow-out');
-  makeBackup({ dataDir, configDir: mkTemp('ow-cfg'), outDir, maxPartBytes: PART });
+  await makeBackup({ dataDir, configDir: mkTemp('ow-cfg'), outDir, maxPartBytes: PART });
   const tData = mkTemp('ow-td');
   fs.mkdirSync(path.join(tData, 'storage'), { recursive: true });
   fs.writeFileSync(path.join(tData, 'storage', 'a.json'), 'VIEJO-EXISTENTE');
-  const res = restoreBackup({
+  const res = await restoreBackup({
     sourceDir: outDir, targetDataDir: tData, targetConfigDir: mkTemp('ow-tc'),
     passphrase: null, overwrite: false,
   });
@@ -240,15 +240,15 @@ test('buildTar/parseTar: inversos, con paths Windows normalizados y orden determ
   assert.equal(parsed[1].data.toString(), 'bbb');
 });
 
-test('parts faltantes / manifest ausente -> errores claros', () => {
+test('parts faltantes / manifest ausente -> errores claros', async () => {
   const sourceDir = mkTemp('missing-part');
   fs.writeFileSync(path.join(sourceDir, 'manifest.json'), JSON.stringify({ parts: 3, encrypted: false, checksum: 'x' }));
-  assert.throws(
+  await assert.rejects(
     () => restoreBackup({ sourceDir, targetDataDir: mkTemp('p1'), targetConfigDir: mkTemp('p2') }),
     /parte|part/i
   );
   const empty = mkTemp('no-manifest');
-  assert.throws(
+  await assert.rejects(
     () => restoreBackup({ sourceDir: empty, targetDataDir: mkTemp('p3'), targetConfigDir: mkTemp('p4') }),
     (e) => e.message === t('es', 'err.no_backup', { dir: empty })
   );

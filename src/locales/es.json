@@ -56,20 +56,36 @@
     "lang_note": "Idiomas disponibles: es | en (variable OPENCODE_LANG)"
   },
   "cli": {
-    "usage": "Uso: opencode-session-sync <setup|backup|restore|status> [opciones]",
-    "help_line": "Opciones: --lang es|en · --provider local|github · --dry-run · --overwrite · --no-encrypt · --output <dir> · --from <dir> · --parts <80mb> · --token <pat> (--owner/--repo para GitHub)",
+    "usage": "Uso: opencode-session-sync <setup|backup|restore|delete|status> [opciones]",
+    "help_line": "Opciones: --lang es|en · --provider local|github|gdrive · --github owner/repo · --gdrive · --token <pat> · --dry-run · --overwrite · --no-encrypt · --output <dir> · --from <stamp> · --parts <80mb> · delete <name> [--yes] (--owner/--repo alternativos para GitHub; --client-id/--client-secret/--refresh-token para Google Drive; setup --help para más)",
     "unknown_cmd": "Comando no reconocido: {cmd}",
+    "delete": {
+      "help": "Uso: opencode-session-sync delete <name> [--yes]\nBorra UNA copia local: <name> es el stamp/nombre de la copia tal como aparece en el listado (listLocal). Sin --yes pide confirmación (s/N). Con proveedor gdrive también intenta borrar la copia remota.",
+      "confirm": "¿Eliminar la copia \"{name}\"? (s/N): ",
+      "confirm_required": "Se requiere confirmación: usa --yes o ejecuta el comando en una terminal interactiva.",
+      "aborted": "Eliminación cancelada."
+    },
     "setup": {
       "q_lang": "Idioma (es/en) [es]: ",
-      "q_provider": "Proveedor de respaldo (local/github) [local]: ",
+      "q_provider": "Proveedor de respaldo (local/github/gdrive) [local]: ",
       "q_owner": "Usuario/org de GitHub: ",
       "q_repo": "Repositorio privado de GitHub [opencode-sessions]: ",
+      "q_token": "Token de GitHub (PAT; Enter = usar OPENCODE_SYNC_TOKEN o sync-auth.json): ",
+      "help": "Uso: opencode-session-sync setup [--github owner/repo] [--gdrive] [--token <pat>] [--provider local|github|gdrive] [--owner <usuario>] [--repo <repo>] [--client-id <id>] [--client-secret <secreto>] [--refresh-token <token>] [--folder-name <carpeta>] [--parts 80mb] [--no-encrypt] [--lang es|en]\nSin flags y en terminal: asistente interactivo. Tokens/credenciales se guardan en sync-auth.json (nunca en sync.json) y se validan contra la API del proveedor. El refresh token de Google Drive también llega por OPENCODE_GDRIVE_REFRESH.",
       "q_pass": "Frase de cifrado (Enter = generar una automáticamente): ",
+      "q_gdrive_client": "Google Drive Client ID: ",
+      "q_gdrive_secret": "Google Drive Client Secret: ",
+      "q_gdrive_refresh": "Google Drive Refresh Token (Enter = usar OPENCODE_GDRIVE_REFRESH o sync-auth.json): ",
+      "q_gdrive_folder": "Carpeta raíz en Drive [opencode-sync]: ",
       "done": "✓ Configuración guardada en {path}",
       "summary": "Proveedor: {provider} · destino de copias: {localDir} · partes: {parts} · cifrado: {encrypt}",
       "pass_generated": "✓ Frase de cifrado generada y guardada en {path} (no se vuelve a mostrar)",
+      "gh_validated": "✓ Credenciales GitHub verificadas vía API: {login} → {repo} · token {tail}",
+      "gd_validated": "✓ Credenciales Google Drive verificadas vía API: {user} · carpeta \"{folder}\" ({folderId})",
+      "gdrive_hint": "Para Google Drive define también --client-id / --client-secret y el refresh token en OPENCODE_GDRIVE_REFRESH o {path}.",
       "github_hint": "Para GitHub define también --owner / --repo y el token en OPENCODE_SYNC_TOKEN o {path}.",
-      "token_hint": "Falta el token: define OPENCODE_SYNC_TOKEN o edítalo en {path} antes de respaldar."
+      "token_hint": "Falta el token: define OPENCODE_SYNC_TOKEN o edítalo en {path} antes de respaldar.",
+      "gd_hint": "Falta el refresh token: define OPENCODE_GDRIVE_REFRESH o edítalo en {path} antes de respaldar."
     },
     "backup": {
       "running": "Creando respaldo…"
@@ -105,11 +121,23 @@
       "goodbye": "Salir"
     }
   },
+  "prog": {
+    "scan": "escaneando",
+    "pack": "comprimiendo",
+    "parts": "escribiendo partes",
+    "read": "leyendo copia",
+    "unpack": "descomprimiendo",
+    "extract": "extrayendo",
+    "files": "archivos"
+  },
   "back": {
     "summary": "✓ Respaldo creado: {files} archivo(s), {bytes} sin comprimir · {parts} parte(s) de {size} · cifrado: {encrypted} · sha256 {checksum}…",
     "encrypted_true": "AES-256-GCM",
     "encrypted_false": "sin cifrar",
     "dest": "→ Guardado en: {dest}",
+    "pushed_gh": "· subido a GitHub {repo}",
+    "pushed_gd": "· subido a Google Drive",
+    "push_failed_warn": "⚠ La copia local SÍ se guardó, pero la subida falló: {detail}",
     "dryrun_build": "→ dry-run: construido correctamente, NO se subió ninguno.",
     "warning_big": "⚠ El respaldo supera 500 MB ({size}); no se truncó nada — viaja troceado en parts.",
     "restored": "✓ Restauración completada: {files} archivo(s) escritos, {skipped} omitido(s).",
@@ -117,8 +145,19 @@
     "skipped_hint": "ℹ Hubo archivos existentes que no se sobreescribieron; usa --overwrite para forzar.",
     "dryrun": "🔍 dry-run: se restaurarían {files} archivo(s) ({bytes}) en data: {dataDir} · config: {configDir}"
   },
+  "del": {
+    "deleted": "Copia {name} eliminada",
+    "not_found": "No existe la copia \"{name}\" en {dir}",
+    "revealed": "Abriendo carpeta: {dir}",
+    "reveal_missing": "No existe el directorio: {dir}",
+    "bad_kind": "Destino inválido: {kind} (usa backups, config o data)",
+    "deleted_remote_only": "Copia remota {name} eliminada en Google Drive",
+    "remote_done": "· copia remota borrada en Google Drive",
+    "remote_warn": "⚠ La copia local SÍ se eliminó, pero NO se pudo borrar la remota en Google Drive: {detail}"
+  },
   "err": {
     "help_hint": "(ejecuta `opencode-session-sync help` para ver la ayuda)",
+    "cancelled": "Operación cancelada",
     "passphrase": "Frase de cifrado incorrecta o datos alterados (fallo de verificación AES-256-GCM).",
     "corrupt": "Datos del respaldo corruptos o formato no reconocido (falta la cabecera OCES1).",
     "pass_required": "El respaldo está cifrado: falta la passphrase (OPENCODE_SYNC_PASSPHRASE o sync-auth.json).",
@@ -127,15 +166,22 @@
     "creds_missing": "Falta owner/repo de GitHub: completa --owner y --repo o sync.json.",
     "git_missing": "git CLI no está disponible en PATH (requerido para el proveedor github).",
     "auth_failed": "Autenticación GitHub rechazada (token inválido o sin permisos Contents: Read and write).",
+    "token_invalid": "Token de GitHub inválido (la API respondió 401). Genera uno nuevo con Contents: Read and write.",
+    "repo_not_found": "El repo {repo} no existe o el token no tiene acceso (404).",
+    "no_push": "El token no tiene permiso de push sobre {repo} (requiere Contents: Read and write).",
+    "gh_api": "Error al contactar la API de GitHub: {detail}",
     "push_failed": "El push a GitHub falló: {detail}",
     "pull_failed": "La descarga desde GitHub falló: {detail}",
     "no_backup": "No se encontró ninguna copia de respaldo en: {dir}",
     "part_missing": "Falta una parte del respaldo: {part} (copia incompleta).",
     "tar_corrupt": "Respaldo dañado: manifest/parts incoherentes o checksum/sha256 no coincide.",
     "traverse": "Entrada insegura bloqueada (path traversal o ruta absoluta): {entry}",
-    "provider_unknown": "Proveedor desconocido: {provider} (usa local o github)",
+    "provider_unknown": "Proveedor desconocido: {provider} (usa local, github o gdrive)",
     "data_missing": "⚠ No existe el directorio de datos de OpenCode: {dir}",
     "config_missing": "⚠ No existe el directorio de configuración de OpenCode: {dir}",
-    "bad_part": "Tamaño de parte inválido: {value} (esperado algo como 80mb)"
+    "bad_part": "Tamaño de parte inválido: {value} (esperado algo como 80mb)",
+    "gdrive_auth": "Autenticación de Google Drive rechazada (revisa clientId/clientSecret/refreshToken; puede estar revocado).",
+    "gdrive_api": "Error en la API de Google Drive: {detail}",
+    "gdrive_creds": "Faltan credenciales de Google Drive: clientId/clientSecret/refreshToken."
   }
 }

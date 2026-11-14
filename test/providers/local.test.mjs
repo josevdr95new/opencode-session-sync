@@ -11,16 +11,16 @@ import { t } from '../../src/i18n.mjs';
 
 const mkTemp = (n) => fs.mkdtempSync(path.join(os.tmpdir(), `oces-org-${n}-`));
 
-function makeFakeBackup(outDir, bytes = 4096) {
+async function makeFakeBackup(outDir, bytes = 4096) {
   const dataDir = mkTemp('o-data');
   fs.writeFileSync(path.join(dataDir, 'opencode.db'), crypto.randomBytes(bytes));
-  makeBackup({ dataDir, configDir: mkTemp('o-cfg'), outDir, maxPartBytes: 80 * 1024 * 1024 });
+  await makeBackup({ dataDir, configDir: mkTemp('o-cfg'), outDir, maxPartBytes: 80 * 1024 * 1024 });
   return outDir; // makeBackup devuelve un info {manifest, parts, ...}, no la ruta
 }
 
-test('push copia manifest.json + part.* a <targetDir>/<stamp>/', () => {
+test('push copia manifest.json + part.* a <targetDir>/<stamp>/', async () => {
   const outDir = mkTemp('push-src');
-  makeFakeBackup(outDir);
+  await makeFakeBackup(outDir);
   const targetDir = mkTemp('push-target');
   const before = new Date();
   const dest = push({ sourceDir: outDir, targetDir, date: before });
@@ -35,11 +35,11 @@ test('push copia manifest.json + part.* a <targetDir>/<stamp>/', () => {
   assert.ok(fs.readdirSync(outDir).includes('manifest.json'));
 });
 
-test('list ordena más nuevo primero y lee manifest', () => {
+test('list ordena más nuevo primero y lee manifest', async () => {
   const targetDir = mkTemp('list-target');
-  const old = makeFakeBackup(mkTemp('list-old'));
+  const old = await makeFakeBackup(mkTemp('list-old'));
   push({ sourceDir: old, targetDir, date: new Date(Date.now() - 600000) });
-  const neu = makeFakeBackup(mkTemp('list-neu'));
+  const neu = await makeFakeBackup(mkTemp('list-neu'));
   const dest = push({ sourceDir: neu, targetDir, date: new Date() });
   const all = list(targetDir);
   assert.equal(all.length, 2);
@@ -47,15 +47,15 @@ test('list ordena más nuevo primero y lee manifest', () => {
   assert.ok(all[0].manifest && all[0].manifest.checksum);
 });
 
-test('pull devuelve el más reciente; error localizable si no hay nada', () => {
+test('pull devuelve el más reciente; error localizable si no hay nada', async () => {
   const empty = mkTemp('pull-empty');
   assert.throws(
     () => pull(empty),
     (e) => e.message === t('es', 'err.no_backup', { dir: empty })
   );
   const targetDir = mkTemp('pull-target');
-  push({ sourceDir: makeFakeBackup(mkTemp('p1')), targetDir, date: new Date(Date.now() - 1200000) });
-  const newest = push({ sourceDir: makeFakeBackup(mkTemp('p2')), targetDir, date: new Date() });
+  push({ sourceDir: await makeFakeBackup(mkTemp('p1')), targetDir, date: new Date(Date.now() - 1200000) });
+  const newest = push({ sourceDir: await makeFakeBackup(mkTemp('p2')), targetDir, date: new Date() });
   assert.equal(pull(targetDir), newest);
 });
 

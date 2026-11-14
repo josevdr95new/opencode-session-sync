@@ -80,7 +80,8 @@ export function authFilePath(configDir = detectConfigDir()) {
   return path.join(configDir, AUTH_FILE);
 }
 
-/** Carga credenciales: file + overrides por env (OPENCODE_SYNC_TOKEN / _PASSPHRASE). */
+/** Carga credenciales: file + overrides por env (OPENCODE_SYNC_TOKEN / _PASSPHRASE
+ *  / OPENCODE_GDRIVE_CLIENT_ID / _CLIENT_SECRET / OPENCODE_GDRIVE_REFRESH). */
 export function loadAuth(configDir = detectConfigDir(), env = process.env) {
   const out = {};
   const file = authFilePath(configDir);
@@ -94,6 +95,9 @@ export function loadAuth(configDir = detectConfigDir(), env = process.env) {
   if (env.OPENCODE_SYNC_TOKEN) out.token = env.OPENCODE_SYNC_TOKEN;
   else if (out.token === undefined) delete out.token;
   if (env.OPENCODE_SYNC_PASSPHRASE) out.passphrase = env.OPENCODE_SYNC_PASSPHRASE;
+  if (env.OPENCODE_GDRIVE_CLIENT_ID) out.gdriveClientId = env.OPENCODE_GDRIVE_CLIENT_ID;
+  if (env.OPENCODE_GDRIVE_CLIENT_SECRET) out.gdriveClientSecret = env.OPENCODE_GDRIVE_CLIENT_SECRET;
+  if (env.OPENCODE_GDRIVE_REFRESH) out.gdriveRefreshToken = env.OPENCODE_GDRIVE_REFRESH;
   return out;
 }
 

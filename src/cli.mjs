@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// opencode-session-sync · CLI independiente (setup | backup | restore | status | menu)
-// Cero dependencias. Códigos de salida: 0 éxito, 1 error.
+// opencode-session-sync · CLI independiente (setup | backup | restore | delete | status | menu)
+// Cero dependencias. Códigos de salida: 0 éxito, 1 error, 130 cancelado (SIGINT/Ctrl+C).
 import { pathToFileURL } from 'node:url';
 import { realpathSync } from 'node:fs';
 import readline from 'node:readline/promises';
-import { runBackup, runRestore, getStatus, runSetup, PROVIDER_NAMES } from './actions.mjs';
+import { runBackup, runRestore, runDeleteLocal, getStatus, runSetup, PROVIDER_NAMES, humanBytes } from './actions.mjs';
+import { authFilePath } from './config.mjs';
 import { detectLanguage, t } from './i18n.mjs';
 
-const VALUE_FLAGS = new Set(['--lang', '--provider', '--output', '--from', '--parts', '--owner', '--repo', '--token']);
+const VALUE_FLAGS = new Set(['--lang', '--provider', '--output', '--from', '--parts', '--owner', '--repo', '--token', '--github', '--client-id', '--client-secret', '--refresh-token']);
 
 function parseArgs(argv) {
   const flags = {};
@@ -104,14 +105,53 @@ async function menuInteractive(lang, flags, langDefault) {
   }
 }
 
+// ------------------------------------------------------------------ cancelación (SIGINT)
+
+/** AbortController cableado a SIGINT (Ctrl+C): Ctrl+C cancela LIMPIO — el motor
+ *  borra los outputs parciales, lanza err.cancelled ('Operación cancelada') y la
+ *  CLI sale con código 130. dispose() desregistra el listener (commands reusables). */
+function sigintSignal() {
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  process.once('SIGINT', onSigint);
+  return { signal: controller.signal, dispose: () => process.off('SIGINT', onSigint) };
+}
+
 // ------------------------------------------------------------------ comando helpers
 
+/** '--github owner/repo' -> {owner, repo}; devuelve null si el flag no viene. */
+function parseGithubFlag(value) {
+  if (!value || value === true) return null;
+  const [owner, repo = ''] = String(value).split('/');
+  if (!owner) return null;
+  return { owner: owner.trim(), repo: repo.trim() || undefined };
+}
+
 async function runSetupCmd({ flags, lang, langDefault }) {
+  if (flags.help || flags.h) {
+    print(t(lang, 'cli.setup.help'));
+    return 0;
+  }
   const interactive = await interactiveSetup({ flags, lang });
   const plan = interactive
     ? { ...interactive, wideAnswers: { ...interactive.wideAnswers, parts: flags.parts, encrypt: flags['no-encrypt'] ? false : undefined } }
     : nonInteractiveSetup(flags, process.env, langDefault);
-  const { lines, cfg } = runSetup({
+  const gh = parseGithubFlag(flags.github); // setup --github owner/repo
+  if (gh) {
+    plan.provider = 'github';
+    plan.wideAnswers.owner = plan.wideAnswers.owner || gh.owner;
+    plan.wideAnswers.repo = plan.wideAnswers.repo || gh.repo;
+  }
+  if (flags.gdrive) {
+    // setup --gdrive (+ --client-id/--client-secret/--refresh-token o preguntas interactivas;
+    // el refresh token también llega por env OPENCODE_GDRIVE_REFRESH — lo mezcla nonInteractive)
+    plan.provider = 'gdrive';
+    plan.wideAnswers.clientId = plan.wideAnswers.clientId || flags['client-id'];
+    plan.wideAnswers.clientSecret = plan.wideAnswers.clientSecret || flags['client-secret'];
+    plan.wideAnswers.refreshToken = plan.wideAnswers.refreshToken || flags['refresh-token'];
+    plan.wideAnswers.folderName = plan.wideAnswers.folderName || flags['folder-name'];
+  }
+  const { lines, cfg } = await runSetup({
     lang: plan.langOverride || plan.lang,
     provider: plan.provider,
     parts: plan.wideAnswers.parts,
@@ -121,34 +161,110 @@ async function runSetupCmd({ flags, lang, langDefault }) {
   });
   print(lines);
   if (plan.provider === 'github' && (process.stdin.isTTY) && (!cfg.owner || !cfg.repo)) {
-    print(t(plan.langOverride || plan.lang, 'cli.setup.github_hint'));
+    print(t(plan.langOverride || plan.lang, 'cli.setup.github_hint', { path: authFilePath() }));
   }
   return 0;
 }
 
-function runBackupCmd(lang, flags) {
-  print(t(lang, 'cli.backup.running'));
-  const { message } = runBackup({
-    lang,
-    provider: flags.provider,
-    output: flags.output,
-    dryRun: Boolean(flags['dry-run']),
-    noEncrypt: flags['no-encrypt'] === true,
-    env: process.env,
-  });
-  print(message);
-  return 0;
+// ------------------------------------------------------------------ progreso (TTY)
+
+/** Barra ASCII de ~24 caracteres: [███████░░░░]. */
+function progressBar(percent, width = 24) {
+  const clamped = Math.min(100, Math.max(0, Number(percent) || 0));
+  const filled = Math.round((clamped / 100) * width);
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
 }
 
-function runRestoreCmd(lang, flags, overwrite, dryRun) {
+/** onProgress para CLI: pinta UNA línea con \r (solo si stdout es TTY).
+ *  `[backup] [████░░░] 42% · comprimiendo (112 MB / 267 MB)`; al 100 imprime la
+ *  línea completa + \n. En non-TTY devuelve undefined (pipes/tests sin ruido). */
+function progressPainter(op, lang) {
+  if (!process.stdout.isTTY) return undefined;
+  let lastLine = '';
+  return (p) => {
+    if (!p) return;
+    const label = t(lang, `prog.${p.phase}`);
+    const sizes = p.phase !== 'scan' && Number(p.total) > 0
+      ? ` (${humanBytes(p.bytes)} / ${humanBytes(p.total)})`
+      : (p.detail ? ` (${p.detail})` : '');
+    const line = `[${op}] [${progressBar(p.percent)}] ${Math.floor(Number(p.percent) || 0)}% · ${label}${sizes}`;
+    if (Math.floor(Number(p.percent) || 0) >= 100) {
+      // limpiar la línea anterior y dejar la final fija con salto de línea
+      process.stdout.write(`\r${' '.repeat(lastLine.length)}\r${line}\n`);
+      lastLine = '';
+    } else {
+      process.stdout.write(`\r${line}`);
+      lastLine = line;
+    }
+  };
+}
+
+async function runBackupCmd(lang, flags) {
+  print(t(lang, 'cli.backup.running'));
+  const { signal, dispose } = sigintSignal(); // Ctrl+C cancela LIMPIO (engine limpia parciales)
+  try {
+    const { message } = await runBackup({
+      lang,
+      provider: flags.provider,
+      output: flags.output,
+      dryRun: Boolean(flags['dry-run']),
+      noEncrypt: flags['no-encrypt'] === true,
+      env: process.env,
+      onProgress: progressPainter('backup', lang),
+      signal,
+    });
+    print(message);
+    return 0;
+  } finally {
+    dispose();
+  }
+}
+
+async function runRestoreCmd(lang, flags, overwrite, dryRun) {
   print(t(lang, 'cli.restore.running'));
-  const { message } = runRestore({
-    lang,
-    from: flags.from,
-    dryRun, // sin --dry-run: se decide por --overwrite
-    overwrite,
-    env: process.env,
-  });
+  const { signal, dispose } = sigintSignal();
+  try {
+    const { message } = await runRestore({
+      lang,
+      from: flags.from, // stamp de la copia (o ruta absoluta compat) — sin esto: la más reciente
+      dryRun, // sin --dry-run: se decide por --overwrite
+      overwrite,
+      env: process.env,
+      onProgress: progressPainter('restore', lang),
+      signal,
+    });
+    print(message);
+    return 0;
+  } finally {
+    dispose();
+  }
+}
+
+/** delete <name>: borra UNA copia local (stamp de listLocal). --yes no pregunta;
+ *  sin --yes pide confirmación por readline 's/n' (exige TTY para no colgarse). */
+async function runDeleteCmd(lang, flags, pos) {
+  const name = pos[1];
+  if (flags.help || flags.h || !name) {
+    print(t(lang, 'cli.delete.help'));
+    return flags.help || flags.h ? 0 : 1;
+  }
+  if (!flags.yes) {
+    if (!process.stdin.isTTY) {
+      print(t(lang, 'cli.delete.confirm_required'), process.stderr);
+      return 1;
+    }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const answer = (await rl.question(t(lang, 'cli.delete.confirm', { name }))).trim();
+      if (!/^(s|si|sí|y|yes)$/i.test(answer)) {
+        print(t(lang, 'cli.delete.aborted'));
+        return 0;
+      }
+    } finally {
+      rl.close();
+    }
+  }
+  const { message } = await runDeleteLocal({ lang, name, env: process.env });
   print(message);
   return 0;
 }
@@ -163,7 +279,7 @@ function runStatusCmd(lang) {
 
 async function interactiveSetup(opts) {
   const { flags, lang } = opts;
-  if (!process.stdin.isTTY || flags.provider) return null; // no interactivo
+  if (!process.stdin.isTTY || flags.provider || flags.github || flags.gdrive) return null; // no interactivo
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
     const answers = {};
@@ -176,6 +292,15 @@ async function interactiveSetup(opts) {
     if (provider === 'github') {
       answers.owner = (await rl.question(t(mergedLang, 'cli.setup.q_owner'))).trim();
       answers.repo = (await rl.question(t(mergedLang, 'cli.setup.q_repo'))).trim() || 'opencode-sessions';
+      const tok = await rl.question(t(mergedLang, 'cli.setup.q_token'));
+      answers.token = tok.trim() || undefined;
+    } else if (provider === 'gdrive') {
+      answers.clientId = (await rl.question(t(mergedLang, 'cli.setup.q_gdrive_client'))).trim() || undefined;
+      answers.clientSecret = (await rl.question(t(mergedLang, 'cli.setup.q_gdrive_secret'))).trim() || undefined;
+      const refresh = await rl.question(t(mergedLang, 'cli.setup.q_gdrive_refresh'));
+      answers.refreshToken = refresh.trim() || process.env.OPENCODE_GDRIVE_REFRESH || undefined;
+      const folder = await rl.question(t(mergedLang, 'cli.setup.q_gdrive_folder'));
+      answers.folderName = folder.trim() || undefined;
     }
     const pass = await rl.question(t(mergedLang, 'cli.setup.q_pass'));
     answers.passphrase = pass.trim() || undefined;
@@ -187,7 +312,7 @@ async function interactiveSetup(opts) {
 
 function nonInteractiveSetup(flags, env, langDefault) {
   const lang = flags.lang || langDefault;
-  const provider = flags.provider || 'local';
+  const provider = flags.gdrive ? 'gdrive' : (flags.provider || 'local');
   if (!PROVIDER_NAMES.includes(provider)) {
     throw new Error(t(lang, 'err.provider_unknown', { provider }));
   }
@@ -198,6 +323,10 @@ function nonInteractiveSetup(flags, env, langDefault) {
       owner: flags.owner, repo: flags.repo, token: flags.token,
       passphrase: flags.passphrase, parts: flags.parts,
       encrypt: flags['no-encrypt'] ? false : undefined,
+      clientId: flags['client-id'] || env.OPENCODE_GDRIVE_CLIENT_ID,
+      clientSecret: flags['client-secret'] || env.OPENCODE_GDRIVE_CLIENT_SECRET,
+      refreshToken: flags['refresh-token'] || env.OPENCODE_GDRIVE_REFRESH,
+      folderName: flags['folder-name'],
     },
     langOverride: lang !== langDefault ? lang : undefined,
   };
@@ -234,6 +363,10 @@ async function main(argv) {
     case 'restore': {
       return runRestoreCmd(lang, flags, overwrite, dryRun ? true : undefined);
     }
+    case 'delete':
+    case 'rm': {
+      return runDeleteCmd(lang, flags, pos);
+    }
     case 'status': {
       return runStatusCmd(lang);
     }
@@ -267,6 +400,11 @@ if (isEntry) {
     .catch((err) => {
       const lang = detectLanguage(process.env);
       print(`✗ ${err && err.message ? err.message : String(err)}`, process.stderr);
+      if (err && err.cancelled) {
+        // Ctrl+C / cancelación: mensaje i18n (err.cancelled) y código de salida 130.
+        process.exitCode = 130;
+        return;
+      }
       print(t(lang, 'err.help_hint'), process.stderr);
       process.exitCode = 1;
     });

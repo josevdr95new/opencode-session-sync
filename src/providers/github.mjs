@@ -42,6 +42,65 @@ function commitMessage(date) {
   return `opencode-sync ${date ? stampFor(date) : stampFor()}`;
 }
 
+// ---------------------------------------------------------------- validate (API REST)
+
+const GH_API = 'https://api.github.com';
+
+function ghHeaders(token) {
+  return {
+    Authorization: `Bearer ${token}`,
+    'User-Agent': 'opencode-session-sync',
+    Accept: 'application/vnd.github+json',
+  };
+}
+
+/**
+ * validateCreds({owner, repo, token, lang, fetch}): valida credenciales contra
+ * la API REST de GitHub usando fetch global (Node >= 18 / Bun). `fetch` es
+ * inyectable para tests (sin red).
+ * - GET /user           -> 401 => err.token_invalid; red falla => err.gh_api
+ * - GET /repos/o/r      -> 404 => err.repo_not_found; permissions.push !== true => err.no_push
+ * Devuelve { ok: true, login, repo }. NUNCA incluye el token en el resultado.
+ */
+export async function validateCreds({ owner, repo, token, lang = DEFAULT_LANG, fetch: fetchImpl } = {}) {
+  const doFetch = fetchImpl || globalThis.fetch;
+  if (!token) throw new Error(t(lang, 'err.token_missing'));
+  if (!owner || !repo) throw new Error(t(lang, 'err.creds_missing'));
+
+  let res;
+  try {
+    res = await doFetch(`${GH_API}/user`, { headers: ghHeaders(token) });
+  } catch (err) {
+    throw new Error(t(lang, 'err.gh_api', { detail: String(err?.message || err) }));
+  }
+  if (res.status === 401) throw new Error(t(lang, 'err.token_invalid'));
+  if (!res.ok) throw new Error(t(lang, 'err.gh_api', { detail: `HTTP ${res.status} (GET /user)` }));
+  let user = null;
+  try { user = await res.json(); } catch { user = null; }
+  const login = user?.login;
+
+  try {
+    res = await doFetch(`${GH_API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, {
+      headers: ghHeaders(token),
+    });
+  } catch (err) {
+    throw new Error(t(lang, 'err.gh_api', { detail: String(err?.message || err) }));
+  }
+  if (res.status === 404) throw new Error(t(lang, 'err.repo_not_found', { repo: `${owner}/${repo}` }));
+  if (!res.ok) throw new Error(t(lang, 'err.gh_api', { detail: `HTTP ${res.status} (GET /repos/${owner}/${repo})` }));
+  let info = null;
+  try { info = await res.json(); } catch { info = null; }
+  if (info?.permissions?.push !== true) throw new Error(t(lang, 'err.no_push', { repo: `${owner}/${repo}` }));
+
+  return { ok: true, login: login || owner, repo: info?.full_name || `${owner}/${repo}` };
+}
+
+/** Máscara segura para UI: 'ghp_…abcd' (prefijo 4 + últimos 4). Nunca el token completo. */
+export function maskToken(token) {
+  const s = String(token || '');
+  return s.length > 8 ? `${s.slice(0, 4)}…${s.slice(-4)}` : '…';
+}
+
 // ---------------------------------------------------------------- push
 
 /**
@@ -92,10 +151,14 @@ function repoCacheDir(owner, repo) {
 }
 
 /**
- * pull({owner, repo, token, lang}): cache en tmp; git init + fetch directo con
+ * pull({owner, repo, token, stamp, lang}): cache en tmp; git init + fetch directo con
  * token en URL + reset --hard. El token no queda en git config.
+ * Con `stamp`: verifica que el commit descargado ES esa copia (mensaje
+ * 'opencode-sync <stamp>'); si no coincide -> error con .notFound (el RPC lo mapea a
+ * 'not_found'). Limitación documentada: el fetch es shallow (--depth 1), solo puede
+ * servir la copia MÁS RECIENTE del repo; stamps antiguos -> not_found.
  */
-export function pull({ owner, repo, token, lang = DEFAULT_LANG }) {
+export function pull({ owner, repo, token, stamp, lang = DEFAULT_LANG }) {
   assertGit(lang);
   if (!token) throw new Error(t(lang, 'err.token_missing'));
   if (!owner || !repo) throw new Error(t(lang, 'err.creds_missing'));
@@ -104,8 +167,8 @@ export function pull({ owner, repo, token, lang = DEFAULT_LANG }) {
   if (!fs.existsSync(path.join(cache, '.git'))) {
     if (runGit(['init'], cwd(cache)).status !== 0) throw new Error(t(lang, 'err.git_missing'));
   }
-  const cwd = { cwd: cache };
-  const fetch = runGit(['fetch', '--force', '--depth', '1', tokenUrl(owner, repo, token), 'main'], cwd);
+  const dir = { cwd: cache };
+  const fetch = runGit(['fetch', '--force', '--depth', '1', tokenUrl(owner, repo, token), 'main'], dir);
   if (fetch.status !== 0) {
     const out = `${fetch.stderr || ''}${fetch.stdout || ''}`;
     if (/couldn't find remote ref|not found|empty repository/i.test(out)) {
@@ -116,8 +179,19 @@ export function pull({ owner, repo, token, lang = DEFAULT_LANG }) {
     }
     throw new Error(t(lang, 'err.pull_failed', { detail: sanitizeGitOutput(out, token) }));
   }
-  if (runGit(['reset', '--hard', 'FETCH_HEAD'], cwd).status !== 0) {
+  if (runGit(['reset', '--hard', 'FETCH_HEAD'], dir).status !== 0) {
     throw new Error(t(lang, 'err.pull_failed', { detail: 'reset' }));
+  }
+  if (stamp) {
+    // pull de UNA copia concreta: el commit descargado debe ser ese stamp
+    const subject = runGit(['log', '-1', '--format=%s'], dir);
+    const want = `opencode-sync ${stamp}`; // mismo formato que commitMessage(stampFor())
+    if (subject.status !== 0 || String(subject.stdout || '').trim() !== want) {
+      const e = new Error(t(lang, 'err.no_backup', { dir: `github.com/${owner}/${repo} [${stamp}]` }));
+      e.notFound = true;
+      e.resource = stamp;
+      throw e;
+    }
   }
   return cache;
 }
