@@ -967,12 +967,18 @@ function RetryButton(props: { ctx: Ctx; onRetry: () => undefined }) {
   )
 }
 
-/** Página de ajustes: tarjeta de configuración del proveedor (local + github + gdrive)
- *  encima del resumen de la config sincronizada del status RPC. Cada guardado bumpea
- *  `version` y createLatest vuelve a fetchar: el resumen y la línea de estado conectado
- *  leen la cfg fresca. Los SECRETS (token, clientId/clientSecret/refreshToken) viajan
- *  SOLO en la llamada setup: nunca se registran en logs, toasts ni se rellenan de
- *  vuelta al campo (quedan vacíos tras el éxito). */
+/** Página de ajustes: tarjeta de conexión con las TRES secciones de proveedor SIEMPRE
+ *  visibles y apiladas (sin condicionales de estado), encima del resumen de la config
+ *  del status RPC. Este superficie pinta el contenido UNA VEZ al montar y NO
+ *  re-renderiza (los onClick sí disparan; los <Show> de estado nunca cambian), así que:
+ *  - el feedback es EXCLUSIVAMENTE por toasts (ctx.toast.show vive fuera del render);
+ *  - los inputs son NO CONTROLADOS: el DOM del campo conserva el texto del usuario y
+ *    `onInput` solo lo espeja en una signal para leerlo en el onClick — sin binding
+ *    reactivo de `value` (aquí no reaccionaría; value va fijo y vacío);
+ *  - tras un setup exitoso NO se refresca nada en pantalla: el toast basta y el estado
+ *  conectado se verá al reabrir Settings. Los SECRETS (token, clientId/clientSecret/
+ *  refreshToken) viajan SOLO en la llamada setup: nunca se registran en logs ni en
+ *  toasts; el server enmascara el token en el message de éxito. */
 function SyncSettings() {
   const ctx = usePlugin()
   const tag = Math.random().toString(36).slice(2, 7)
@@ -999,48 +1005,26 @@ function SyncSettings() {
     return `${ctx.t('settings.local.active')}${cfg().localDir ? ` · ${cfg().localDir}` : ''}`
   }
 
-  // === Configuración de proveedor (estado propio con primitivas del host) ===================
-  // Selección del formulario: null = sigue a la cfg conectada; al elegir, el usuario manda.
-  // 'gdrive' SÍ está en la unión: el RPC (src/rpc.ts setup) declara local|github|gdrive.
-  const [picked, setPicked] = createVisitState<'local' | 'github' | 'gdrive' | null>(null)
-  const selProvider = (): 'local' | 'github' | 'gdrive' =>
-    picked() ?? (cfg().provider === 'github' ? 'github' : cfg().provider === 'gdrive' ? 'gdrive' : 'local')
+  // === Campos de las secciones (UNCONTROLLED, espejo del texto del DOM) ======================
+  // Sin binding reactivo de `value` (value fijo ''): el usuario teclea, el DOM del input
+  // guarda su propio texto y onInput lo copia a la signal; el onClick de cada botón lee
+  // la signal. Campos vacíos no viajan: el server conserva los previos de sync.json.
   const [owner, setOwner] = createVisitState('')
   const [repo, setRepo] = createVisitState('')
   const [token, setToken] = createVisitState('')
   // Credenciales OAuth de Google Drive: los TRES primeros son secrets (campos password,
-  // jamás rellenados de vuelta ni logueados); folderName es opcional y no sensible.
+  // jamás logueados ni incluidos en toasts); folderName es opcional y no sensible.
   const [clientId, setClientId] = createVisitState('')
   const [clientSecret, setClientSecret] = createVisitState('')
   const [refreshToken, setRefreshToken] = createVisitState('')
   const [folderName, setFolderName] = createVisitState('')
-  const [saving, setSaving] = createVisitState(false)
-  const [saveErr, setSaveErr] = createVisitState<string | null>(null)
 
-  // Selección de proveedor con botones normales (el Menu del host no dispara onSelect
-  // en esta superficie). La traza en consola sirve de diagnóstico remoto (renderer.log).
-  const pick = (p: 'local' | 'github' | 'gdrive') => {
-    console.info('session-sync: provider picked', p)
-    setSaveErr(null)
-    setPicked(p)
-  }
-
-  // GitHub listo: token siempre; owner/repo si el campo los trae O la cfg ya los tiene
-  // (runSetup conserva los valores previos cuando el campo llega vacío).
-  const ghReady = (): boolean =>
-    token().length > 0 &&
-    (owner().length > 0 || typeof cfg().owner === 'string') &&
-    (repo().length > 0 || typeof cfg().repo === 'string')
-
-  // gdrive listo: los 3 secrets siempre (el server los valida contra la API de Google);
-  // folderName es opcional (el core crea la carpeta raíz si falta).
-  const gdReady = (): boolean =>
-    clientId().length > 0 && clientSecret().length > 0 && refreshToken().length > 0
-
+  // Conectar un proveedor: rpc.setup + feedback SOLO por toast (éxito con el message del
+  // server —ya enmascarado—, fallo con el error traducido). Sin busy ni refresco de
+  // pantalla: este superficie no re-renderiza y el estado conectado se verá al reabrir
+  // Settings. La traza queda en consola como diagnóstico remoto (renderer.log).
   const connect = async (provider: 'local' | 'github' | 'gdrive'): Promise<void> => {
-    if (saving()) return
-    setSaving(true) // validando: busy inline, botón deshabilitado
-    setSaveErr(null)
+    console.info('session-sync: connect', provider)
     try {
       // Campos vacíos no viajan: el server conserva los previos de sync.json.
       const input: {
@@ -1070,25 +1054,17 @@ function SyncSettings() {
               }
             : { provider }
       const res = (await rpc(ctx).setup(input)) as { lines: string; cfg: SyncCfg; message?: string }
-      if (provider === 'github') setToken('') // éxito: el campo queda VACÍO (jamás se rellena de vuelta)
-      if (provider === 'gdrive') {
-        // Los 3 secrets se limpian tras el éxito: viven solo en sync-auth.json del core.
-        setClientId('')
-        setClientSecret('')
-        setRefreshToken('')
-      }
-      setVersion(version() + 1) // relectura: resumen + estado conectado con la cfg fresca
       ctx.toast.show({
         variant: 'success',
         title: ctx.t('settings.save.done'),
         description: res.message, // el server ya enmascara los secrets (solo cola visible)
       })
     } catch (err) {
-      const msg = errMessage(err, ctx)
-      setSaveErr(msg) // inline junto al formulario
-      ctx.toast.show({ variant: 'error', title: ctx.t('settings.save.error'), description: msg })
-    } finally {
-      setSaving(false)
+      ctx.toast.show({
+        variant: 'error',
+        title: ctx.t('settings.save.error'),
+        description: errMessage(err, ctx),
+      })
     }
   }
 
@@ -1114,151 +1090,112 @@ function SyncSettings() {
             <span>{statusText()}</span>
           </div>
         </Show>
-        <div class="oss-setup-row">
-          <span class="oss-settings-key">{ctx.t('settings.provider')}</span>
-          <div class="oss-provider-picker">
-            <ctx.ui.Button
-              variant={selProvider() === 'local' ? 'contrast' : 'ghost-muted'}
-              size="small"
-              icon="folder"
-              onClick={() => pick('local')}
-            >
-              {ctx.t('settings.provider.local')}
-            </ctx.ui.Button>
-            <ctx.ui.Button
-              variant={selProvider() === 'github' ? 'contrast' : 'ghost-muted'}
-              size="small"
-              icon="github"
-              onClick={() => pick('github')}
-            >
-              {ctx.t('settings.provider.github')}
-            </ctx.ui.Button>
-            <ctx.ui.Button
-              variant={selProvider() === 'gdrive' ? 'contrast' : 'ghost-muted'}
-              size="small"
-              icon="cloud-upload"
-              onClick={() => pick('gdrive')}
-            >
-              {ctx.t('settings.provider.gdrive')}
+        {/* --- Las TRES secciones siempre visibles y apiladas: cero condicionales de
+            estado (este superficie no re-renderiza; cualquier <Show> de picked nunca
+            cambiaría). El título visible es nuestro (el prop label del host es solo
+            para screen readers); el prop label se pasa igual para accesibilidad. Los
+            inputs son NO CONTROLADOS: value fijo vacío (el DOM conserva el texto del
+            usuario) + onInput espejando a la signal que lee el onClick. */}
+        <div class="oss-field">
+          <span class="oss-field-label">{ctx.t('settings.section.local')}</span>
+          <span class="oss-provider-sub">{ctx.t('settings.section.local.desc')}</span>
+          <Show when={cfg().localDir}>
+            <span class="oss-provider-sub">{ctx.t('settings.local.dir', { dir: cfg().localDir ?? '' })}</span>
+          </Show>
+          <div class="oss-setup-foot">
+            <ctx.ui.Button variant="contrast" icon="folder" onClick={() => void connect('local')}>
+              {ctx.t('settings.local.use')}
             </ctx.ui.Button>
           </div>
         </div>
-        {/* El label visible es nuestro (el prop label del host es solo para screen readers);
-            el prop label se pasa igual para accesibilidad. */}
-        <Show when={selProvider() === 'github'}>
-          <div class="oss-setup-fields">
-            <div class="oss-field">
-              <span class="oss-field-label">{ctx.t('settings.gh.owner')}</span>
-              <ctx.ui.TextInput
-                label={ctx.t('settings.gh.owner')}
-                value={owner()}
-                onInput={setOwner}
-                placeholder={cfg().owner || 'owner'}
-              />
-            </div>
-            <div class="oss-field">
-              <span class="oss-field-label">{ctx.t('settings.gh.repo')}</span>
-              <ctx.ui.TextInput
-                label={ctx.t('settings.gh.repo')}
-                value={repo()}
-                onInput={setRepo}
-                placeholder={cfg().repo || 'repo'}
-              />
-            </div>
-            <div class="oss-field">
-              <span class="oss-field-label">{ctx.t('settings.gh.token')}</span>
-              <ctx.ui.TextInput
-                label={ctx.t('settings.gh.token')}
-                type="password"
-                value={token()}
-                onInput={setToken}
-                placeholder="ghp_… / github_pat_…"
-              />
-            </div>
-            <div class="oss-setup-foot">
-              <ctx.ui.Button
-                variant="contrast"
-                busy={saving()}
-                disabled={saving() || !ghReady()}
-                onClick={() => void connect('github')}
-              >
-                {saving() ? ctx.t('settings.connecting') : ctx.t('settings.connect')}
-              </ctx.ui.Button>
-            </div>
+        <div class="oss-field">
+          <span class="oss-field-label">{ctx.t('settings.section.github')}</span>
+          <span class="oss-provider-sub">{ctx.t('settings.section.github.desc')}</span>
+        </div>
+        <div class="oss-setup-fields">
+          <div class="oss-field">
+            <span class="oss-field-label">{ctx.t('settings.gh.owner')}</span>
+            <ctx.ui.TextInput
+              label={ctx.t('settings.gh.owner')}
+              value=""
+              onInput={setOwner}
+              placeholder={cfg().owner || 'owner'}
+            />
           </div>
-        </Show>
-        <Show when={selProvider() === 'gdrive'}>
-          <div class="oss-setup-fields">
-            <div class="oss-field">
-              <span class="oss-field-label">{ctx.t('settings.gdrive.client.id')}</span>
-              <ctx.ui.TextInput
-                label={ctx.t('settings.gdrive.client.id')}
-                value={clientId()}
-                onInput={setClientId}
-                placeholder="…apps.googleusercontent.com"
-              />
-            </div>
-            <div class="oss-field">
-              <span class="oss-field-label">{ctx.t('settings.gdrive.client.secret')}</span>
-              <ctx.ui.TextInput
-                label={ctx.t('settings.gdrive.client.secret')}
-                type="password"
-                value={clientSecret()}
-                onInput={setClientSecret}
-                placeholder="GOCSPX-…"
-              />
-            </div>
-            <div class="oss-field">
-              <span class="oss-field-label">{ctx.t('settings.gdrive.refresh.token')}</span>
-              <ctx.ui.TextInput
-                label={ctx.t('settings.gdrive.refresh.token')}
-                type="password"
-                value={refreshToken()}
-                onInput={setRefreshToken}
-                placeholder="1//…"
-              />
-            </div>
-            <div class="oss-field">
-              <span class="oss-field-label">{ctx.t('settings.gdrive.folder.name')}</span>
-              <ctx.ui.TextInput
-                label={ctx.t('settings.gdrive.folder.name')}
-                value={folderName()}
-                onInput={setFolderName}
-                placeholder="OpenCode"
-              />
-            </div>
-            <div class="oss-setup-foot">
-              <ctx.ui.Button
-                variant="contrast"
-                busy={saving()}
-                disabled={saving() || !gdReady()}
-                onClick={() => void connect('gdrive')}
-              >
-                {saving() ? ctx.t('settings.connecting') : ctx.t('settings.connect')}
-              </ctx.ui.Button>
-            </div>
+          <div class="oss-field">
+            <span class="oss-field-label">{ctx.t('settings.gh.repo')}</span>
+            <ctx.ui.TextInput
+              label={ctx.t('settings.gh.repo')}
+              value=""
+              onInput={setRepo}
+              placeholder={cfg().repo || 'repo'}
+            />
           </div>
-        </Show>
-        <Show when={selProvider() === 'local'}>
-          <div class="oss-setup-fields">
-            <Show when={cfg().localDir}>
-              <div class="oss-provider-sub">{ctx.t('settings.local.dir', { dir: cfg().localDir ?? '' })}</div>
-            </Show>
-            <div class="oss-setup-foot">
-              <ctx.ui.Button
-                variant="contrast"
-                busy={saving()}
-                disabled={saving()}
-                onClick={() => void connect('local')}
-              >
-                {saving() ? ctx.t('settings.connecting') : ctx.t('settings.local.use')}
-              </ctx.ui.Button>
-            </div>
+          <div class="oss-field">
+            <span class="oss-field-label">{ctx.t('settings.gh.token')}</span>
+            <ctx.ui.TextInput
+              label={ctx.t('settings.gh.token')}
+              type="password"
+              value=""
+              onInput={setToken}
+              placeholder="ghp_… / github_pat_…"
+            />
           </div>
-        </Show>
-        <Show when={saveErr() != null}>
-          <div class="oss-setup-error">{saveErr()}</div>
-        </Show>
+          <div class="oss-setup-foot">
+            <ctx.ui.Button variant="contrast" icon="github" onClick={() => void connect('github')}>
+              {ctx.t('settings.connect')}
+            </ctx.ui.Button>
+          </div>
+        </div>
+        <div class="oss-field">
+          <span class="oss-field-label">{ctx.t('settings.section.gdrive')}</span>
+          <span class="oss-provider-sub">{ctx.t('settings.section.gdrive.desc')}</span>
+        </div>
+        <div class="oss-setup-fields">
+          <div class="oss-field">
+            <span class="oss-field-label">{ctx.t('settings.gdrive.client.id')}</span>
+            <ctx.ui.TextInput
+              label={ctx.t('settings.gdrive.client.id')}
+              value=""
+              onInput={setClientId}
+              placeholder="…apps.googleusercontent.com"
+            />
+          </div>
+          <div class="oss-field">
+            <span class="oss-field-label">{ctx.t('settings.gdrive.client.secret')}</span>
+            <ctx.ui.TextInput
+              label={ctx.t('settings.gdrive.client.secret')}
+              type="password"
+              value=""
+              onInput={setClientSecret}
+              placeholder="GOCSPX-…"
+            />
+          </div>
+          <div class="oss-field">
+            <span class="oss-field-label">{ctx.t('settings.gdrive.refresh.token')}</span>
+            <ctx.ui.TextInput
+              label={ctx.t('settings.gdrive.refresh.token')}
+              type="password"
+              value=""
+              onInput={setRefreshToken}
+              placeholder="1//…"
+            />
+          </div>
+          <div class="oss-field">
+            <span class="oss-field-label">{ctx.t('settings.gdrive.folder.name')}</span>
+            <ctx.ui.TextInput
+              label={ctx.t('settings.gdrive.folder.name')}
+              value=""
+              onInput={setFolderName}
+              placeholder="OpenCode"
+            />
+          </div>
+          <div class="oss-setup-foot">
+            <ctx.ui.Button variant="contrast" icon="cloud-upload" onClick={() => void connect('gdrive')}>
+              {ctx.t('settings.connect')}
+            </ctx.ui.Button>
+          </div>
+        </div>
       </div>
 
       <div class="oss-settings-row">
@@ -1341,9 +1278,12 @@ export default Plugin.define({
       'settings.overview': 'Resumen',
       'settings.setup': 'Conexión',
       'settings.provider': 'Proveedor',
-      'settings.provider.local': 'Almacenamiento local',
-      'settings.provider.github': 'GitHub',
-      'settings.provider.gdrive': 'Google Drive',
+      'settings.section.local': 'Almacenamiento local',
+      'settings.section.local.desc': 'Guarda las copias en una carpeta de este equipo.',
+      'settings.section.github': 'GitHub',
+      'settings.section.github.desc': 'Sube las copias cifradas a un repo privado tuyo.',
+      'settings.section.gdrive': 'Google Drive',
+      'settings.section.gdrive.desc': 'Sube las copias a una carpeta de tu Drive.',
       'settings.gh.owner': 'Usuario u organización',
       'settings.gh.repo': 'Repositorio',
       'settings.gh.token': 'Token de acceso (GitHub)',
@@ -1352,7 +1292,6 @@ export default Plugin.define({
       'settings.gdrive.refresh.token': 'Refresh token',
       'settings.gdrive.folder.name': 'Nombre de carpeta (opcional)',
       'settings.connect': 'Conectar',
-      'settings.connecting': 'Conectando…',
       'settings.connected': 'Conectado a GitHub · {{repo}}',
       'settings.gdrive.connected': 'Conectado a Google Drive · {{user}}',
       'settings.local.active': 'Almacenamiento local activo',
@@ -1420,9 +1359,12 @@ export default Plugin.define({
       'settings.overview': 'Overview',
       'settings.setup': 'Connection',
       'settings.provider': 'Provider',
-      'settings.provider.local': 'Local storage',
-      'settings.provider.github': 'GitHub',
-      'settings.provider.gdrive': 'Google Drive',
+      'settings.section.local': 'Local storage',
+      'settings.section.local.desc': 'Keep backups in a folder on this machine.',
+      'settings.section.github': 'GitHub',
+      'settings.section.github.desc': 'Upload encrypted backups to your own private repo.',
+      'settings.section.gdrive': 'Google Drive',
+      'settings.section.gdrive.desc': 'Upload backups to a folder in your Drive.',
       'settings.gh.owner': 'User or organization',
       'settings.gh.repo': 'Repository',
       'settings.gh.token': 'Access token (GitHub)',
@@ -1431,7 +1373,6 @@ export default Plugin.define({
       'settings.gdrive.refresh.token': 'Refresh token',
       'settings.gdrive.folder.name': 'Folder name (optional)',
       'settings.connect': 'Connect',
-      'settings.connecting': 'Connecting…',
       'settings.connected': 'Connected to GitHub · {{repo}}',
       'settings.gdrive.connected': 'Connected to Google Drive · {{user}}',
       'settings.local.active': 'Local storage active',
